@@ -13,7 +13,7 @@
              cephfs: {
                  name: 'CephFS',
                  ipanel: 'CephFSInputPanel',
-@@ -63598,6 +63604,103 @@
+@@ -63596,6 +63602,103 @@
  	},
      ],
  });
