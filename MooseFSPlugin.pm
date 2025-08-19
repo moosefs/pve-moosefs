@@ -312,6 +312,25 @@ sub volume_has_feature {
     return undef;
 }
 
+sub get_formats {
+    my ($class, $scfg, $storeid) = @_;
+
+    # In bdev mode, only support raw format
+    if ($scfg->{mfsbdev}) {
+        return { default => 'raw', valid => { 'raw' => 1 } };
+    }
+
+    # In non-bdev mode, support all formats but default to raw
+    return {
+        default => 'raw',
+        valid => {
+            'raw' => 1,
+            'qcow2' => 1,
+            'vmdk' => 1,
+        }
+    };
+}
+
 sub parse_name_dir {
     my $name = shift;
     return PVE::Storage::Plugin::parse_name_dir($name);
