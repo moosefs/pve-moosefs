@@ -400,7 +400,7 @@ sub alloc_image {
     # We bypass the NBD logic for any disk of size <= 8MiB, as it's very likely an EFI disk.
     # Also bypass NBD logic for VM state files (vm-XXX-state-NAME.raw) which should remain as regular files
     return $class->SUPER::alloc_image($storeid, $scfg, $vmid, $fmt, $name, $size)
-        if !$scfg->{mfsbdev} or $size <= 8 * 1024 or $name =~ /^vm-\d+-state-/;
+        if !$scfg->{mfsbdev} or $size <= 8 * 1024 or (defined($name) && $name =~ /^vm-\d+-state-/);
 
     die "mfsbdev only supports raw format" if $fmt ne 'raw';
     $name = $class->find_free_diskname($storeid, $scfg, $vmid, $fmt) if !$name;
@@ -653,6 +653,14 @@ sub deactivate_volume {
     # Skip deactivation for state files - they're not NBD-mapped
     if ($name =~ /^vm-\d+-state-/) {
         log_debug "Skipping deactivation for state file $volname";
+        return 1;
+    }
+
+    # Check if volume is actually NBD-mapped by checking for .size file
+    # Only NBD-mapped volumes have .size files
+    my $size_file = "$scfg->{path}/images/$vmid/$name.size";
+    if (!-e $size_file) {
+        log_debug "Skipping deactivation for non-NBD volume $volname (no .size file)";
         return 1;
     }
 
