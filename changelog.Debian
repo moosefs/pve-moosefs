@@ -1,3 +1,15 @@
+libpve-storage-custom-moosefs-perl (0.1.6-1) unstable; urgency=medium
+
+  * Adds PVE 9 compatibility
+  * Adds mfsioretries options to prevent interruptions causing issues
+  * Improvements to LXC snapshot support
+  * Reduced debugging log noise
+  * Multiple small and defensive fixes
+  * Improved support for LXC
+  * Enhancements for live migration, unmapping, and cloning
+
+ -- Benjamin Arntzen <zorlin@gmail.com>  Tue, 19 Aug 2025 03:53:00 +0100
+
 libpve-storage-custom-moosefs-perl (0.1.3-1) unstable; urgency=medium
 
   * Lots of small fixes
