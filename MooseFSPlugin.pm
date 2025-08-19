@@ -86,7 +86,7 @@ sub moosefs_start_bdev {
     # Do not start mfsbdev if it is already running
     return if moosefs_bdev_is_active($scfg);
 
-    my $cmd = ['/usr/sbin/mfsbdev', 'start', '-H', $mfsmaster, '-S', 'proxmox', '-p', $mfspassword];
+    my $cmd = ['/usr/sbin/mfsbdev', 'start', '-H', $mfsmaster, '-S', 'proxmox', '-p', $mfspassword, '-o', 'mfsioretries=99999999'];
 
     run_command($cmd, errmsg => 'mfsbdev start failed');
 }
@@ -129,6 +129,8 @@ sub moosefs_mount {
     if (defined $mfssubfolder) {
         push @$cmd, '-o', "mfssubfolder=$mfssubfolder";
     }
+
+    push @$cmd, '-o', "mfsioretries=99999999";
 
     push @$cmd, $scfg->{path};
 
