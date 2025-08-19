@@ -2,3 +2,6 @@
 *.1.pod
 *.1.gz
 .mcp.json
+CLAUDE.md
+development
+.claude
