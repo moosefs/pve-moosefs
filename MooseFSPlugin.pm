@@ -44,9 +44,10 @@ sub moosefs_is_mounted {
 
     # Check that we return something like mfs#mfsmaster:9421 or mfs#mfsmaster:9421/subfolder
     # on a fuse filesystem with the correct mountpoint
+    # Note: mfsbdev may add a trailing slash when no subfolder is specified
     return $mountpoint if grep {
         $_->[2] eq 'fuse' &&
-        $_->[0] =~ /^mfs(#|\\043)\Q$mfsmaster\E\Q:\E\Q$mfsport\E$subfolder_pattern$/ &&
+        $_->[0] =~ /^mfs(#|\\043)\Q$mfsmaster\E\Q:\E\Q$mfsport\E$subfolder_pattern\/?$/ &&
         $_->[1] eq $mountpoint
     } @$mountdata;
     return undef;
@@ -86,7 +87,12 @@ sub moosefs_start_bdev {
     # Do not start mfsbdev if it is already running
     return if moosefs_bdev_is_active($scfg);
 
-    my $cmd = ['/usr/sbin/mfsbdev', 'start', '-H', $mfsmaster, '-S', 'proxmox'];
+    my $cmd = ['/usr/sbin/mfsbdev', 'start', '-H', $mfsmaster];
+    
+    # Add subfolder if specified (mfsbdev uses -S for subfolder)
+    if (defined $mfssubfolder && $mfssubfolder ne '') {
+        push @$cmd, '-S', $mfssubfolder;
+    }
     
     # Add port if specified (mfsbdev uses -P for port)
     if (defined $mfsport) {
