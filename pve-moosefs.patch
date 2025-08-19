@@ -1,19 +1,19 @@
---- pvemanagerlib.8.4.1.js	2025-05-19 07:47:25.563586454 +0100
-+++ pvemanagerlib.8.4.1-patched.js	2025-05-19 07:55:27.081099792 +0100
-@@ -2317,6 +2317,12 @@
- 	    faIcon: 'building',
- 	    backups: false,
- 	},
-+ 	moosefs: {
-+ 	    name: 'MooseFS',
-+ 	    ipanel: 'MooseFSInputPanel',
-+ 	    faIcon: 'building',
-+ 	    backups: true,
-+ 	},
- 	zfspool: {
- 	    name: 'ZFS',
- 	    ipanel: 'ZFSPoolInputPanel',
-@@ -59783,6 +59789,103 @@
+--- pvemanagerlib.js	2025-08-19 04:20:00 +0100
++++ pvemanagerlib.patched.js	2025-08-19 04:20:00 +0100
+@@ -2326,6 +2326,12 @@
+                 faIcon: 'building',
+                 backups: false,
+             },
++            moosefs: {
++                name: 'MooseFS',
++                ipanel: 'MooseFSInputPanel',
++                faIcon: 'building',
++                backups: true,
++            },
+             cephfs: {
+                 name: 'CephFS',
+                 ipanel: 'CephFSInputPanel',
+@@ -63598,6 +63604,103 @@
  	},
      ],
  });
