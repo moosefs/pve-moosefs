@@ -96,7 +96,9 @@ This command creates a custom storage named `moosefs-vm-storage` using the Moose
 * [ServeTheHome Forums](https://forums.servethehome.com/index.php?threads/custom-storage-plugins-for-proxmox.12558/)
 * Official Proxmox GlusterFS and CephFS storage plugins
 
-## v0.1.10 - Critical bug fixes
+## Changelog
+
+### v0.1.10 - Critical bug fixes
 
   * Improve mount detection, fix subfolder bug in bdev adapter
   * Improve NBD handling
