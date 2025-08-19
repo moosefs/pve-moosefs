@@ -300,8 +300,8 @@ sub parse_volname {
     # log the situation and delegate to the parent class's implementation.
     # This handles cases where PVE calls with undef during cleanup.
     unless (defined $volname && !ref($volname)) {
-        log_debug "[parse-volname] volname is not a defined non-reference scalar: " . 
-                  (defined $volname ? ref($volname) : 'undef') . 
+        log_debug "[parse-volname] volname is not a defined non-reference scalar: " .
+                  (defined $volname ? ref($volname) : 'undef') .
                   ". Delegating to SUPER::parse_volname.";
         return $class->SUPER::parse_volname($volname);
     }
@@ -416,7 +416,7 @@ sub free_image {
         if (-e $image_file_path) { # Should generally exist if it was mapped
             my $cmd_unmap = ['/usr/sbin/mfsbdev', 'unmap', '-f', $mfs_internal_path];
             run_command($cmd_unmap, errmsg => "mfsbdev unmap -f $mfs_internal_path failed");
-            
+
             log_debug "[free_image] Unmap for $volname ($mfs_internal_path) presumably successful. Unlinking image and .size files.";
             unlink $image_file_path or log_debug "[free_image] Failed to unlink $image_file_path post-unmap: $!" if -e $image_file_path;
             unlink $size_file_path or log_debug "[free_image] Failed to unlink $size_file_path post-unmap: $!" if -e $size_file_path;
@@ -453,7 +453,7 @@ sub map_volume {
     unless (defined $volname) {
         log_debug "[map_volume] volname is undefined, skipping";
         # Or, perhaps fall back to a SUPER call if appropriate for this method
-        return $class->SUPER::activate_volume($storeid, $scfg, $volname, $snapname); 
+        return $class->SUPER::activate_volume($storeid, $scfg, $volname, $snapname);
     }
 
     my ($vtype, $name, $vmid, undef, undef, $isBase, $format) = $class->parse_volname($volname);
@@ -461,8 +461,8 @@ sub map_volume {
     # Only handle raw format image volumes
     return $class->SUPER::activate_volume($storeid, $scfg, $volname, $snapname) if $vtype ne 'images' || $format ne 'raw';
 
-    # Construct the MooseFS path from the parsed components  
-    my $mfs_path = "/images/$vmid/$name";  
+    # Construct the MooseFS path from the parsed components
+    my $mfs_path = "/images/$vmid/$name";
 
     # Check if MooseFS bdev is active
     if (!moosefs_bdev_is_active($scfg)) {
@@ -470,15 +470,15 @@ sub map_volume {
         moosefs_start_bdev($scfg);
     }
 
-    # Check if the volume is already mapped  
-    my $list_cmd = ['/usr/sbin/mfsbdev', 'list'];  
-    my $list_output = '';  
-    eval {  
-        run_command($list_cmd, outfunc => sub { $list_output .= shift; }, errmsg => 'mfsbdev list failed');  
-    };  
-    if ($@) {  
-        log_debug "Failed to list MooseFS block devices: $@";  
-        return $class->SUPER::filesystem_path($scfg, $volname, $snapname); 
+    # Check if the volume is already mapped
+    my $list_cmd = ['/usr/sbin/mfsbdev', 'list'];
+    my $list_output = '';
+    eval {
+        run_command($list_cmd, outfunc => sub { $list_output .= shift; }, errmsg => 'mfsbdev list failed');
+    };
+    if ($@) {
+        log_debug "Failed to list MooseFS block devices: $@";
+        return $class->SUPER::filesystem_path($scfg, $volname, $snapname);
     }
 
     # improved parsing: scan each line, allow any spacing/order
@@ -510,7 +510,7 @@ sub map_volume {
 
     # Size is in kibibytes, but MooseFS expects bytes
     my $size_bytes = $size_kib * 1024;
-    
+
     # If size is 0 or less, log and return undef, as mapping such a volume is not possible or meaningful.
     if ($size_bytes <= 0) {
         log_debug "Calculated size_bytes is $size_bytes for volume $volname (source KiB: $size_kib). Cannot map, returning undef.";
@@ -520,30 +520,30 @@ sub map_volume {
     log_debug "Activating volume $volname with size $size_bytes";
 
     my $map_cmd = ['/usr/sbin/mfsbdev', 'map', '-f', $path, '-s', $size_bytes];
-    my $map_output = '';  
-    eval {  
-        run_command($map_cmd,  
-            outfunc => sub { $map_output .= shift; },  
-            errmsg => 'mfsbdev map failed');  
-    };  
-    if ($@) {  
-        log_debug "Failed to map MooseFS block device: $@";  
-        # Fall back to regular path if we can't get mappings  
+    my $map_output = '';
+    eval {
+        run_command($map_cmd,
+            outfunc => sub { $map_output .= shift; },
+            errmsg => 'mfsbdev map failed');
+    };
+    if ($@) {
+        log_debug "Failed to map MooseFS block device: $@";
+        # Fall back to regular path if we can't get mappings
         return $class->SUPER::filesystem_path($scfg, $volname, $snapname);
     }
 
-    if ($map_output =~ m|->(/dev/nbd\d+)|) {  
-        my $nbd_path = $1;  
-        log_debug "Found NBD device $nbd_path for volume $volname";  
-        return $nbd_path;  
+    if ($map_output =~ m|->(/dev/nbd\d+)|) {
+        my $nbd_path = $1;
+        log_debug "Found NBD device $nbd_path for volume $volname";
+        return $nbd_path;
     }
-  
-    # If we couldn't parse the output or no NBD device was found  
-    log_debug "No NBD device found in output: $map_output";  
-    return $class->SUPER::filesystem_path($scfg, $volname, $snapname); 
+
+    # If we couldn't parse the output or no NBD device was found
+    log_debug "No NBD device found in output: $map_output";
+    return $class->SUPER::filesystem_path($scfg, $volname, $snapname);
 }
 
-sub activate_volume {  
+sub activate_volume {
     my ($class, $storeid, $scfg, $volname, $snapname, $cache) = @_;
 
     # Defensive - make sure $scfg is a hashref, not a storeid
@@ -559,24 +559,24 @@ sub activate_volume {
     return 1;
 }
 
-sub deactivate_volume {  
-    my ($class, $storeid, $scfg, $volname, $snapname, $cache) = @_;  
+sub deactivate_volume {
+    my ($class, $storeid, $scfg, $volname, $snapname, $cache) = @_;
 
     # Defensive - make sure $scfg is a hashref, not a storeid
     $scfg = PVE::Storage::config()->{ids}->{$storeid} unless ref($scfg) eq 'HASH';
 
-    return $class->SUPER::deactivate_volume($storeid, $scfg, $volname, $snapname, $cache) if !$scfg->{mfsbdev};  
+    return $class->SUPER::deactivate_volume($storeid, $scfg, $volname, $snapname, $cache) if !$scfg->{mfsbdev};
 
-    my ($vtype, $name, $vmid) = $class->parse_volname($volname);  
-    return $class->SUPER::deactivate_volume($storeid, $scfg, $volname, $snapname, $cache) if $vtype ne 'images';  
+    my ($vtype, $name, $vmid) = $class->parse_volname($volname);
+    return $class->SUPER::deactivate_volume($storeid, $scfg, $volname, $snapname, $cache) if $vtype ne 'images';
 
-    my $path = "/images/$vmid/$name";  
-    
-    log_debug "Deactivating volume $volname";  
+    my $path = "/images/$vmid/$name";
+
+    log_debug "Deactivating volume $volname";
 
     my $cmd = ['/usr/sbin/mfsbdev', 'unmap', '-f', $path];
 
-    run_command($cmd, errmsg => "can't unmap MooseFS device '$path'");  
+    run_command($cmd, errmsg => "can't unmap MooseFS device '$path'");
 
     return 1;
 }
@@ -669,7 +669,7 @@ sub filesystem_path {
 
     my ($scfg, $volname, $snapname) = @args;
     die "[fs-path] invalid scfg" unless ref($scfg) eq 'HASH';
-    
+
     # If volname is undefined, it's likely a request for the storage base path.
     unless (defined $volname) {
         log_debug "[fs-path] volname is undefined. Returning storage base path: $scfg->{path}";
@@ -786,7 +786,7 @@ sub volume_snapshot_delete {
 
     my $mountpoint = $scfg->{path};
 
-    my $cmd = ['/usr/bin/rm', '-rf', "$mountpoint/images/$vmid/snaps/$snap/$name"];
+    my $cmd = ['/usr/bin/mfsrmsnapshot', "$mountpoint/images/$vmid/snaps/$snap/$name"];
 
     run_command($cmd, errmsg => 'An error occurred while deleting the snapshot');
 
