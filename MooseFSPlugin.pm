@@ -783,14 +783,14 @@ sub filesystem_path {
     }
 
     # Only do NBD logic for raw images without snapshots AND when a sidecar size file exists
-    my $size_sidecar = "$scfg->{path}/images/$vmid/$name.size";
+    my $size_sidecar = defined($vmid) ? "$scfg->{path}/images/$vmid/$name.size" : undef;
     unless ($scfg->{mfsbdev} && $vtype eq 'images' && $format eq 'raw' && !defined($snapname) && -e $size_sidecar) {
         return $class->SUPER::filesystem_path($scfg, $volname, $snapname);
     }
 
     log_debug "[fs-path] Attempting NBD path resolution for $volname";
 
-    my $path = "/images/$vmid/$name";
+    my $path = defined($vmid) ? "/images/$vmid/$name" : "/images/$name";
 
     if (!moosefs_bdev_is_active($scfg)) {
         log_debug "MooseFS bdev not active, activating";
