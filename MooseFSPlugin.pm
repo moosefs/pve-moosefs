@@ -213,6 +213,23 @@ sub options {
     };
 }
 
+sub get_volume_attribute {
+    return PVE::Storage::DirPlugin::get_volume_attribute(@_);
+}
+
+sub update_volume_attribute {
+    return PVE::Storage::DirPlugin::update_volume_attribute(@_);
+}
+
+# Deprecated but still called by PVE
+sub update_volume_notes {
+    return PVE::Storage::DirPlugin::update_volume_notes(@_);
+}
+
+sub get_volume_notes {
+    return PVE::Storage::DirPlugin::get_volume_notes(@_);
+}
+
 sub volume_has_feature {
     my ($class, $scfg, $feature, $storeid, $volname, $snapname, $running, $opts) = @_;
     my $features = {
