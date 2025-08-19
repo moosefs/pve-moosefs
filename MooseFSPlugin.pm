@@ -87,11 +87,22 @@ sub moosefs_start_bdev {
     # Do not start mfsbdev if it is already running
     return if moosefs_bdev_is_active($scfg);
 
+    # Ensure NBD module is loaded before starting mfsbdev
+    my $nbd_loaded = system("lsmod | grep -q '^nbd '") == 0;
+    if (!$nbd_loaded) {
+        eval { run_command(['modprobe', 'nbd', 'max_part=16'], errmsg => 'Failed to load nbd module'); };
+        if ($@) {
+            die "Cannot start mfsbdev: NBD kernel module not loaded. Please run: modprobe nbd max_part=16\n";
+        }
+    }
+
     my $cmd = ['/usr/sbin/mfsbdev', 'start', '-H', $mfsmaster];
     
-    # Add subfolder if specified (mfsbdev uses -S for subfolder)
+    # mfsbdev requires -S parameter, use '/' if no subfolder specified
     if (defined $mfssubfolder && $mfssubfolder ne '') {
         push @$cmd, '-S', $mfssubfolder;
+    } else {
+        push @$cmd, '-S', '/';
     }
     
     # Add port if specified (mfsbdev uses -P for port)
@@ -389,8 +400,24 @@ sub alloc_image {
     # Size is in kibibytes, but MooseFS expects bytes
     my $size_bytes = $size * 1024;
 
+    # Check if NBD module is loaded before trying to map
+    my $nbd_loaded = system("lsmod | grep -q '^nbd '") == 0;
+    if (!$nbd_loaded) {
+        # Try to load the nbd module
+        eval { run_command(['modprobe', 'nbd', 'max_part=16'], errmsg => 'Failed to load nbd module'); };
+        if ($@) {
+            die "NBD kernel module not loaded. Please run: modprobe nbd max_part=16\n";
+        }
+    }
+
     my $cmd = ['/usr/sbin/mfsbdev', 'map', '-f', $path, '-s', $size_bytes];
-    run_command($cmd, errmsg => 'mfsbdev map failed');
+    eval { run_command($cmd, errmsg => 'mfsbdev map failed'); };
+    if ($@) {
+        if ($@ =~ /can't find free NBD device/) {
+            die "No free NBD devices available. Check if nbd module is loaded (lsmod | grep nbd) and increase max_part if needed\n";
+        }
+        die $@;
+    }
 
     return "$vmid/$name";
 }
@@ -537,6 +564,18 @@ sub map_volume {
 
     log_debug "Activating volume $volname with size $size_bytes";
 
+    # Check if NBD module is loaded before trying to map
+    my $nbd_loaded = system("lsmod | grep -q '^nbd '") == 0;
+    if (!$nbd_loaded) {
+        # Try to load the nbd module
+        eval { run_command(['modprobe', 'nbd', 'max_part=16'], errmsg => 'Failed to load nbd module'); };
+        if ($@) {
+            log_debug "NBD kernel module not loaded and could not be loaded: $@";
+            # Fall back to regular path if NBD is not available
+            return $class->SUPER::filesystem_path($scfg, $volname, $snapname);
+        }
+    }
+
     my $map_cmd = ['/usr/sbin/mfsbdev', 'map', '-f', $path, '-s', $size_bytes];
     my $map_output = '';
     eval {
@@ -546,6 +585,9 @@ sub map_volume {
     };
     if ($@) {
         log_debug "Failed to map MooseFS block device: $@";
+        if ($@ =~ /can't find free NBD device/) {
+            log_debug "No free NBD devices available. Consider increasing max_part parameter for nbd module";
+        }
         # Fall back to regular path if we can't get mappings
         return $class->SUPER::filesystem_path($scfg, $volname, $snapname);
     }
