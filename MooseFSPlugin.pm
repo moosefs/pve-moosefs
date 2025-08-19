@@ -155,7 +155,7 @@ sub moosefs_unmount {
 }
 
 sub api {
-    return 11;
+    return 12;
 }
 
 sub type {
@@ -201,7 +201,6 @@ sub options {
         path => { fixed => 1 },
         'prune-backups' => { optional => 1 },
         'max-protected-backups' => { optional => 1 },
-        maxfiles => { optional => 1 },
         mfsmaster => { optional => 1 },
         mfsport => { optional => 1 },
         mfspassword => { optional => 1 },
