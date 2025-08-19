@@ -98,6 +98,11 @@ This command creates a custom storage named `moosefs-vm-storage` using the Moose
 
 ## 📝 Changelog
 
+### v0.1.7 - Critical Bug Fixes
+
+* Fixes rare but major crash condition for VMs and LXCs
+* Adds support for Proxmox VE 9.0
+
 ### v0.1.5 - Bug Fixes
 
 * Improvements to LXC snapshot support
