@@ -81,7 +81,7 @@ This command creates a custom storage named `moosefs-vm-storage` using the Moose
 * `--mfsmaster <hostname>` — specify the MooseFS metadata server
 * `--mfspassword <password>` — use if your MooseFS export requires authentication
 * `--mfssubfolder <folder>` — mount a subfolder rather than the root of the MooseFS volume
-* `--mfsport <port>` — coming soon 🚧
+* `--mfsport <port>` — mount a MooseFS filesystem that uses a custom master port
 
 ## 🙏 Credits
 

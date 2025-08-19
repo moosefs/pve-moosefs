@@ -1,3 +1,18 @@
+libpve-storage-custom-moosefs-perl (0.1.9-1) unstable; urgency=medium
+
+  * Fix issue with free_image SUPER delegation
+
+ -- Benjamin Arntzen <zorlin@gmail.com>  Tue, 19 Aug 2025 07:40:00 +0100
+
+libpve-storage-custom-moosefs-perl (0.1.8-1) unstable; urgency=medium
+
+  * Fix volume attributes/notes
+  * Switch to mfsrmsnapshot instead of rm for snapshots
+  * Add mfsport support
+  * Support optional password for mfsbdev
+
+ -- Benjamin Arntzen <zorlin@gmail.com>  Tue, 19 Aug 2025 07:30:00 +0100
+
 libpve-storage-custom-moosefs-perl (0.1.7-1) unstable; urgency=medium
 
   * Fix mount detection on PVE9

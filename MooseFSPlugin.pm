@@ -86,7 +86,19 @@ sub moosefs_start_bdev {
     # Do not start mfsbdev if it is already running
     return if moosefs_bdev_is_active($scfg);
 
-    my $cmd = ['/usr/sbin/mfsbdev', 'start', '-H', $mfsmaster, '-S', 'proxmox', '-p', $mfspassword, '-o', 'mfsioretries=99999999'];
+    my $cmd = ['/usr/sbin/mfsbdev', 'start', '-H', $mfsmaster, '-S', 'proxmox'];
+    
+    # Add port if specified (mfsbdev uses -P for port)
+    if (defined $mfsport) {
+        push @$cmd, '-P', $mfsport;
+    }
+    
+    # Add password if specified
+    if (defined $mfspassword) {
+        push @$cmd, '-p', $mfspassword;
+    }
+    
+    push @$cmd, '-o', 'mfsioretries=99999999';
 
     run_command($cmd, errmsg => 'mfsbdev start failed');
 }
@@ -395,7 +407,7 @@ sub free_image {
     if (!$scfg->{mfsbdev} || $vtype ne 'images') {
         my $reason = !$scfg->{mfsbdev} ? "mfsbdev_disabled" : "vtype_not_images ('$vtype')";
         log_debug "[free_image] Vol: $volname. Reason: $reason. Using SUPER::free_image.";
-        return $class->SUPER::free_image(@_); # Pass original @args
+        return $class->SUPER::free_image($storeid, $scfg, $volname, $isBase, $format_param);
     }
 
     # --- mfsbdev is ON and vtype IS 'images' ---
@@ -432,7 +444,7 @@ sub free_image {
         # This covers small/EFI disks (handled by SUPER::alloc_image) and non-raw images.
         # Delegate to SUPER::free_image to handle these plain files correctly.
         log_debug "[free_image] Vol: $volname. Resolved path ('" . (defined $resolved_path ? $resolved_path : "undef") . "') is NOT NBD. Using SUPER::free_image for plain file deletion.";
-        return $class->SUPER::free_image(@_); # Pass original @args
+        return $class->SUPER::free_image($storeid, $scfg, $volname, $isBase, $format_param);
     }
     return undef;
 }
