@@ -767,8 +767,9 @@ sub filesystem_path {
         return "$mountpoint/images/$vmid/snaps/$snapname/$name";
     }
 
-    # Only do NBD logic for raw images without snapshots
-    unless ($scfg->{mfsbdev} && $vtype eq 'images' && $format eq 'raw' && !defined($snapname)) {
+    # Only do NBD logic for raw images without snapshots AND when a sidecar size file exists
+    my $size_sidecar = "$scfg->{path}/images/$vmid/$name.size";
+    unless ($scfg->{mfsbdev} && $vtype eq 'images' && $format eq 'raw' && !defined($snapname) && -e $size_sidecar) {
         return $class->SUPER::filesystem_path($scfg, $volname, $snapname);
     }
 
