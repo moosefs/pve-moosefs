@@ -40,7 +40,7 @@ sub moosefs_is_mounted {
     $mfssubfolder ||= '';
     # Strip leading slashes from mfssubfolder
     $mfssubfolder =~ s|^/+||;
-    my $subfolder_pattern = defined($mfssubfolder) ? "\Q/$mfssubfolder\E" : "";
+    my $subfolder_pattern = ($mfssubfolder ne '') ? "\Q/$mfssubfolder\E" : "";
 
     # Check that we return something like mfs#mfsmaster:9421 or mfs#mfsmaster:9421/subfolder
     # on a fuse filesystem with the correct mountpoint
