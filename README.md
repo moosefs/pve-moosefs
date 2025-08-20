@@ -33,16 +33,16 @@ This plugin enables native support for MooseFS as a storage backend in Proxmox V
 
 ### Prerequisites
 
-* **Proxmox VE 8.4.1 or newer**
+* **Proxmox VE 9.0 or newer**
 
 ### Option 1: Easy Install
 
-1. Upgrade to Proxmox 8.4.1
+1. Upgrade to Proxmox 9.0
 2. Download and install the `.deb` package from the [Releases](../../releases) page.
 
 ### Option 2: Manual Build
 
-1. Upgrade to Proxmox 8.4.1
+1. Upgrade to Proxmox 9.0
 2. Clone this repository:
 
    ```bash
