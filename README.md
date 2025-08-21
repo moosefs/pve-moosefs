@@ -6,9 +6,9 @@ This plugin enables native support for MooseFS as a storage backend in Proxmox V
 
 ## ⚠️ Disclaimer
 
-**This project is highly experimental.**
+**This project is under active development but should still be considered beta.**
 
-> ⚠️ **Do NOT use snapshots in MooseFS block device (bdev) mode**. They are currently unsafe and may result in data loss. Snapshot support is still under active development and will remain experimental until this warning is removed.
+> ⚠️ **Keep backups of your data**. Snapshots are unsafe and may result in data loss. Snapshot support is still under active development and will remain experimental until this warning is removed.
 
 ## 📷 Preview
 
@@ -23,10 +23,9 @@ This plugin enables native support for MooseFS as a storage backend in Proxmox V
 * Live VM migration across Proxmox hosts with MooseFS-backed storage
 * Clean unmounting when MooseFS storage is removed
 * MooseFS block device (`mfsbdev`) support for high performance
+* Instant snapshots and near instant rollbacks
 
 ## 🚧 Planned Features
-
-* Instant snapshots and rollbacks
 * Instant cloning
 
 ## 🚀 Installation & Usage
