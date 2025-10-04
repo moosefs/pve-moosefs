@@ -908,6 +908,13 @@ sub with_nbd_unmapped {
         return $operation->();
     }
 
+    # Untaint the path components for taint mode (required for vzdump)
+    # vmid and name are already validated by parse_volname
+    die "Invalid vmid" unless $vmid =~ /^(\d+)$/;
+    $vmid = $1;
+    die "Invalid volume name" unless $name =~ /^([-\w.]+)$/;
+    $name = $1;
+
     my $mfs_path = "/images/$vmid/$name";
     my $was_mapped = 0;
     my $nbd_device = undef;
@@ -943,8 +950,13 @@ sub with_nbd_unmapped {
     if ($was_mapped) {
         log_debug "[with_nbd_unmapped] Remapping volume $volname after snapshot operation";
 
+        # Untaint scfg path for taint mode
+        my $storage_path = $scfg->{path};
+        die "Invalid storage path" unless $storage_path =~ /^(\/[-\w\/]+)$/;
+        $storage_path = $1;
+
         # Get size from .size file
-        my $size_file = "$scfg->{path}$mfs_path.size";
+        my $size_file = "$storage_path$mfs_path.size";
         if (!-e $size_file) {
             log_debug "[with_nbd_unmapped] ERROR: Size file $size_file missing, cannot remap";
             die "Cannot remap volume after snapshot: size file missing at $size_file";
@@ -958,6 +970,9 @@ sub with_nbd_unmapped {
             $content;
         };
         chomp $size_kib;
+        # Untaint size value (must be numeric)
+        die "Invalid size in .size file" unless $size_kib =~ /^(\d+)$/;
+        $size_kib = $1;
         my $size_bytes = $size_kib * 1024;
 
         my $map_cmd = ['/usr/sbin/mfsbdev', 'map', '-f', $mfs_path, '-s', $size_bytes];
