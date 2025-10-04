@@ -474,6 +474,31 @@ sub alloc_image {
         die $@;
     }
 
+    # Create the actual image file for LXC compatibility
+    # LXC needs to mkfs the file directly, not through NBD
+    # mfsbdev map creates a 0-byte file, we need to set the correct size
+    my $full_path = "$scfg->{path}$path";
+    my $current_size = -s $full_path || 0;
+
+    if ($current_size != $size_bytes) {
+        log_debug "[alloc_image] Setting file size for LXC compatibility: $full_path ($current_size -> $size_bytes bytes)";
+        eval {
+            run_command(['truncate', '-s', $size_bytes, $full_path],
+                errmsg => "Failed to set image file size");
+        };
+        if ($@) {
+            log_debug "[alloc_image] Failed to set file size: $@";
+            # Try to unmap on failure
+            eval {
+                my $unmap_cmd = $scfg->{mfsnbdlink}
+                    ? ['/usr/sbin/mfsbdev', 'unmap', '-l', $scfg->{mfsnbdlink}, '-f', $path]
+                    : ['/usr/sbin/mfsbdev', 'unmap', '-f', $path];
+                run_command($unmap_cmd);
+            };
+            die $@;
+        }
+    }
+
     return "$vmid/$name";
 }
 
@@ -882,12 +907,45 @@ sub filesystem_path {
     return "$scfg->{path}$path";
 }
 
+# Query mfsbdev for volume size by parsing 'mfsbdev list' output
+sub get_mfsbdev_size {
+    my ($class, $scfg, $mfs_path) = @_;
+
+    return undef unless moosefs_bdev_is_active($scfg);
+
+    my $list_cmd = $scfg->{mfsnbdlink}
+        ? ['/usr/sbin/mfsbdev', 'list', '-l', $scfg->{mfsnbdlink}]
+        : ['/usr/sbin/mfsbdev', 'list'];
+
+    my $list_output = '';
+    eval {
+        run_command($list_cmd, outfunc => sub { $list_output .= shift; });
+    };
+    return undef if $@;
+
+    # Parse mfsbdev list output
+    # Format: file: /images/204/vm-204-disk-0 ; device: /dev/nbd2 ; link: ... ; size: 2147483648 (2.000GiB) ; ...
+    for my $line (split /\r?\n/, $list_output) {
+        if ($line =~ /\bfile:\s*\Q$mfs_path\E\b.*?\bsize:\s*(\d+)/) {
+            my $size_bytes = $1;
+            my $size_kib = int($size_bytes / 1024);
+            log_debug "[get_mfsbdev_size] Found $mfs_path: $size_bytes bytes ($size_kib KiB)";
+            return $size_kib;
+        }
+    }
+
+    log_debug "[get_mfsbdev_size] Volume $mfs_path not found in mfsbdev list";
+    return undef;
+}
+
 sub volume_resize {
     my ($class, $scfg, $storeid, $volname, $size, $running) = @_;
 
     unless (defined $volname && !ref($volname)) {
         Carp::confess("[${\__PACKAGE__}::$0] called with invalid volname: " . (defined $volname ? ref($volname) : 'undef'));
     }
+
+    log_debug "[volume_resize] Resizing $volname to $size KiB";
 
     # Defensive - make sure $scfg is a hashref, not a storeid
     $scfg = PVE::Storage::config()->{ids}->{$storeid} unless ref($scfg) eq 'HASH';
@@ -897,14 +955,32 @@ sub volume_resize {
     my ($vtype, $name, $vmid) = $class->parse_volname($volname);
     return $class->SUPER::volume_resize(@_) if $vtype ne 'images';
 
-    my $path = "/images/$vmid/$name";
+    my $mfs_path = "/images/$vmid/$name";
+    my $full_path = "$scfg->{path}$mfs_path";
+    my $size_file = "$full_path.size";
 
-    if (-e $path) {
-        my $cmd = ['/usr/sbin/mfsbdev', 'resize', $path, $size];
-        run_command($cmd, errmsg => 'mfsbdev resize failed');
-    } else {
-        die "volume '$volname' does not exist\n";
+    # Check if image exists
+    if (!-e $full_path) {
+        die "volume '$volname' does not exist at $full_path\n";
     }
+
+    log_debug "[volume_resize] Resizing mfsbdev volume: $mfs_path";
+
+    # Resize using mfsbdev
+    my $size_bytes = $size * 1024;  # Convert KiB to bytes
+    my $cmd = $scfg->{mfsnbdlink}
+        ? ['/usr/sbin/mfsbdev', 'resize', '-l', $scfg->{mfsnbdlink}, '-f', $mfs_path, '-s', $size_bytes]
+        : ['/usr/sbin/mfsbdev', 'resize', '-f', $mfs_path, '-s', $size_bytes];
+
+    run_command($cmd, errmsg => 'mfsbdev resize failed');
+
+    # Update .size file
+    log_debug "[volume_resize] Updating .size file to $size KiB";
+    open(my $fh, '>', $size_file) or die "Failed to write $size_file: $!";
+    print $fh $size;
+    close $fh;
+
+    log_debug "[volume_resize] Successfully resized $volname to $size KiB";
 
     return undef;
 }
