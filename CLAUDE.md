@@ -38,4 +38,9 @@ This project uses Palace (`pal`) for development:
 - `pal switch` - Switch between development machines
 
 ## Project-Specific Guidelines
-[TODO: Add project-specific guidelines here]
+- **Proxmox VE Storage Plugin Development** - This plugin extends Proxmox's storage subsystem
+- **Use DeepWiki MCP for Proxmox Documentation** - When researching Proxmox storage APIs, hooks, or internals, use the DeepWiki MCP to query the `proxmox/pve-storage` repository for authoritative documentation and code examples
+- **Follow Proxmox/Perl Conventions** - Adhere to Proxmox coding standards and Perl best practices
+- **NBD Device Lifecycle** - Pay careful attention to mfsbdev NBD device mapping/unmapping in all operations
+- **Taint Mode Compatibility** - All code must work with Perl's taint mode (-T) as used by vzdump and other Proxmox tools
+- **Test with Real Infrastructure** - Use actual MooseFS clusters and Proxmox VE for testing, not mocks
