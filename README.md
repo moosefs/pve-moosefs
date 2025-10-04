@@ -9,6 +9,7 @@ This plugin enables native support for MooseFS as a storage backend in Proxmox V
 **This project is under active development but should still be considered beta.**
 
 > ⚠️ **Keep backups of your data**. Snapshots are unsafe and may result in data loss. Snapshot support is still under active development and will remain experimental until this warning is removed.
+> ⚠️⚠️⚠️ **There is currently a known snapshotting issue with pve-moosefs running in mfsbdev mode discovered 2025-10-04 - a fix is coming ASAP**, eta 1-3 days.
 
 ## 📷 Preview
 
