@@ -44,5 +44,9 @@ This project uses Palace (`pal`) for development:
 - **NBD Device Lifecycle** - Pay careful attention to mfsbdev NBD device mapping/unmapping in all operations
 - **Taint Mode Compatibility** - All code must work with Perl's taint mode (-T) as used by vzdump and other Proxmox tools
 - **Test with Real Infrastructure** - Use actual MooseFS clusters and Proxmox VE for testing, not mocks
-- **MooseFS Cluster Initialization** - ALWAYS use `mfsmaster -c <config> -a` to initialize a cluster, never operate on metadata.mfs.empty directly
-- **CRITICAL: Never Copy metadata.mfs.empty to Working Directory** - NEVER copy metadata.mfs.empty into the DATA_PATH directory. This will overwrite existing metadata and cause INSTANT DATA LOSS. Always use `mfsmaster -a` for initialization
+- **MooseFS Cluster Initialization** - For NEW clusters only: Copy metadata.mfs.empty to DATA_PATH, then run `mfsmaster -c <config> -a` to initialize
+- **CRITICAL: Never Copy metadata.mfs.empty to Existing Cluster** - NEVER copy metadata.mfs.empty into DATA_PATH of an EXISTING cluster with metadata.mfs. This will overwrite live metadata and cause INSTANT DATA LOSS
+- **Initialization Steps for New Cluster**:
+  1. `cp /var/lib/mfs/metadata.mfs.empty /path/to/DATA_PATH/metadata.mfs.empty`
+  2. `chown mfs:mfs /path/to/DATA_PATH/metadata.mfs.empty`
+  3. `mfsmaster -c <config> -a` (creates metadata.mfs from metadata.mfs.empty)
