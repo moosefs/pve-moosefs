@@ -7,3 +7,8 @@ development
 .mcp.json
 .mcp.json
 CLAUDE.md
+
+
+# Added by cargo
+
+/target

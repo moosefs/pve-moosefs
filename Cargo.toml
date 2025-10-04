@@ -1,0 +1,15 @@
+[package]
+name = "generate-patch"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "generate-patch"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+tempfile = "3.8"
+ar = "0.9"
+tar = "0.4"
+flate2 = "1.0"

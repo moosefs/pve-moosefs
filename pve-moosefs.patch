@@ -1,5 +1,5 @@
---- pvemanagerlib.js	2025-08-19 04:20:00 +0100
-+++ pvemanagerlib.patched.js	2025-08-19 04:20:00 +0100
+--- pvemanagerlib.js
++++ pvemanagerlib.patched.js
 @@ -2326,6 +2326,12 @@
                  faIcon: 'building',
                  backups: false,
@@ -13,8 +13,8 @@
              cephfs: {
                  name: 'CephFS',
                  ipanel: 'CephFSInputPanel',
-@@ -63596,6 +63602,103 @@
- 	},
+@@ -63708,6 +63714,112 @@
+         },
      ],
  });
 +Ext.define('PVE.storage.MooseFSController', {
@@ -109,11 +109,27 @@
 +                submitEmpty: false,
 +                inputType: 'password',
 +            },
++            {
++                xtype: 'textfield',
++                name: 'mfsnbdlink',
++                fieldLabel: gettext('NBD Socket'),
++                allowBlank: true,
++                submitEmpty: false,
++                emptyText: '/dev/mfs/nbdsock',
++            },
 +        ];
 +
 +        me.callParent();
 +    },
 +});
++
  Ext.define('PVE.storage.BTRFSInputPanel', {
      extend: 'PVE.panel.StorageBase',
  
+@@ -66049,4 +66161,4 @@
+             },
+         });
+     },
+-});
++});
+\ No newline at end of file
