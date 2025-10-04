@@ -499,6 +499,30 @@ sub free_image {
         log_debug "[free_image] Vol: $volname. Resolved path ('" . (defined $resolved_path ? $resolved_path : "undef") . "') is NOT NBD. Using SUPER::free_image for plain file deletion.";
         return $class->SUPER::free_image($storeid, $scfg, $volname, $isBase, $format_param);
     }
+
+    # Cleanup orphaned .size files and empty directories (defensive against partial allocations)
+    my $image_dir_path = "$scfg->{path}/images/$vmid";
+
+    # Remove orphaned .size file if disk file doesn't exist
+    if (-e $size_file_path && !-e $image_file_path) {
+        log_debug "[free_image] Found orphaned .size file without disk, removing: $size_file_path";
+        unlink $size_file_path or log_debug "[free_image] Failed to remove orphaned .size file: $!";
+    }
+
+    # Remove empty VM image directory to prevent future allocation issues
+    if (-d $image_dir_path) {
+        opendir(my $dh, $image_dir_path) or log_debug "[free_image] Cannot open directory $image_dir_path: $!";
+        if ($dh) {
+            my @contents = grep { $_ ne '.' && $_ ne '..' } readdir($dh);
+            closedir($dh);
+
+            if (@contents == 0) {
+                log_debug "[free_image] Removing empty VM directory: $image_dir_path";
+                rmdir($image_dir_path) or log_debug "[free_image] Failed to remove empty directory $image_dir_path: $!";
+            }
+        }
+    }
+
     return undef;
 }
 
