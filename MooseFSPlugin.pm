@@ -117,7 +117,21 @@ sub moosefs_start_bdev {
     
     push @$cmd, '-o', 'mfsioretries=99999999';
 
-    run_command($cmd, errmsg => 'mfsbdev start failed');
+    eval { run_command($cmd, errmsg => 'mfsbdev start failed'); };
+    if ($@) {
+        my $error = $@;
+        # Provide helpful context if mfsbdev start fails
+        if ($error =~ /can't resolve hostname|connection refused|no route to host|network unreachable/i) {
+            die "Failed to start mfsbdev: Cannot connect to MooseFS master '$mfsmaster' on port " . ($mfsport // '9421') . ".\n" .
+                "Please verify:\n" .
+                "  1. MooseFS master server is running\n" .
+                "  2. Hostname '$mfsmaster' resolves correctly\n" .
+                "  3. Port " . ($mfsport // '9421') . " is accessible from this host\n" .
+                "  4. Network connectivity to the MooseFS master\n\n" .
+                "Original error: $error";
+        }
+        die $error;
+    }
 }
 
 sub moosefs_stop_bdev {
@@ -163,7 +177,21 @@ sub moosefs_mount {
 
     push @$cmd, $scfg->{path};
 
-    run_command($cmd, errmsg => "mount error");
+    eval { run_command($cmd, errmsg => "mount error"); };
+    if ($@) {
+        my $error = $@;
+        # Provide helpful context if mount fails
+        if ($error =~ /can't resolve hostname|connection refused|no route to host|network unreachable/i) {
+            die "Failed to mount MooseFS storage: Cannot connect to MooseFS master '$mfsmaster' on port $mfsport.\n" .
+                "Please verify:\n" .
+                "  1. MooseFS master server is running\n" .
+                "  2. Hostname '$mfsmaster' resolves correctly\n" .
+                "  3. Port $mfsport is accessible from this host\n" .
+                "  4. Network connectivity to the MooseFS master\n\n" .
+                "Original error: $error";
+        }
+        die $error;
+    }
 }
 
 sub moosefs_unmount {
