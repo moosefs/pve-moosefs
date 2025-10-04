@@ -844,6 +844,84 @@ sub volume_resize {
     return undef;
 }
 
+# Helper function to execute operations with NBD device temporarily unmapped
+# This is critical for snapshot operations to avoid crashing the NBD daemon
+sub with_nbd_unmapped {
+    my ($class, $scfg, $volname, $operation) = @_;
+
+    my ($vtype, $name, $vmid, undef, undef, $isBase, $format) = $class->parse_volname($volname);
+
+    # Only apply NBD unmapping logic for raw images in mfsbdev mode
+    if ($vtype ne 'images' || $format ne 'raw' || !$scfg->{mfsbdev}) {
+        return $operation->();
+    }
+
+    my $mfs_path = "/images/$vmid/$name";
+    my $was_mapped = 0;
+    my $nbd_device = undef;
+
+    # Check if currently mapped to an NBD device
+    if (moosefs_bdev_is_active($scfg)) {
+        my $list_cmd = ['/usr/sbin/mfsbdev', 'list'];
+        my $list_output = '';
+        eval {
+            run_command($list_cmd, outfunc => sub { $list_output .= shift; }, errmsg => 'mfsbdev list failed');
+        };
+
+        # Parse mfsbdev list output to find if this volume is mapped
+        for my $line (split /\r?\n/, $list_output) {
+            if ($line =~ /\bfile:\s*\Q$mfs_path\E\b.*?\bdevice:\s*(\/dev\/nbd\d+)/) {
+                $was_mapped = 1;
+                $nbd_device = $1;
+                log_debug "[with_nbd_unmapped] Volume $volname is mapped to $nbd_device, unmapping before snapshot operation";
+
+                # Unmap the device to prevent NBD daemon crash during snapshot
+                my $unmap_cmd = ['/usr/sbin/mfsbdev', 'unmap', '-f', $mfs_path];
+                run_command($unmap_cmd, errmsg => "Failed to unmap $mfs_path before snapshot operation");
+                last;
+            }
+        }
+    }
+
+    # Execute the snapshot operation with NBD unmapped
+    my $result = eval { $operation->() };
+    my $error = $@;
+
+    # Remap if it was mapped before
+    if ($was_mapped) {
+        log_debug "[with_nbd_unmapped] Remapping volume $volname after snapshot operation";
+
+        # Get size from .size file
+        my $size_file = "$scfg->{path}$mfs_path.size";
+        if (!-e $size_file) {
+            log_debug "[with_nbd_unmapped] ERROR: Size file $size_file missing, cannot remap";
+            die "Cannot remap volume after snapshot: size file missing at $size_file";
+        }
+
+        my $size_kib = do {
+            open(my $fh, '<', $size_file) or die "Failed to read size file $size_file: $!";
+            local $/;
+            my $content = <$fh>;
+            close $fh;
+            $content;
+        };
+        chomp $size_kib;
+        my $size_bytes = $size_kib * 1024;
+
+        my $map_cmd = ['/usr/sbin/mfsbdev', 'map', '-f', $mfs_path, '-s', $size_bytes];
+        eval { run_command($map_cmd, errmsg => "Failed to remap $mfs_path after snapshot operation"); };
+        if ($@) {
+            log_debug "[with_nbd_unmapped] ERROR: Failed to remap after snapshot: $@";
+            die "Snapshot operation succeeded but failed to remap NBD device: $@";
+        }
+
+        log_debug "[with_nbd_unmapped] Successfully remapped $volname to NBD device";
+    }
+
+    die $error if $error;
+    return $result;
+}
+
 sub volume_snapshot {
     my ($class, $scfg, $storeid, $volname, $snap) = @_;
 
@@ -855,19 +933,22 @@ sub volume_snapshot {
 
     die "snapshots not supported for this storage type" if $storageType ne 'images';
 
-    my $mountpoint = $scfg->{path};
+    # Wrap the snapshot operation with NBD unmapping to prevent daemon crashes
+    return $class->with_nbd_unmapped($scfg, $volname, sub {
+        my $mountpoint = $scfg->{path};
 
-    my $snapdir = "$mountpoint/images/$vmid/snaps/$snap";
+        my $snapdir = "$mountpoint/images/$vmid/snaps/$snap";
 
-    File::Path::make_path($snapdir);
+        File::Path::make_path($snapdir);
 
-    log_debug "running '/usr/bin/mfsmakesnapshot $mountpoint/images/$vmid/$name $snapdir/$name'\n";
+        log_debug "running '/usr/bin/mfsmakesnapshot $mountpoint/images/$vmid/$name $snapdir/$name'\n";
 
-    my $cmd = ['/usr/bin/mfsmakesnapshot', "$mountpoint/images/$vmid/$name", "$snapdir/$name"];
+        my $cmd = ['/usr/bin/mfsmakesnapshot', "$mountpoint/images/$vmid/$name", "$snapdir/$name"];
 
-    run_command($cmd, errmsg => 'An error occurred while making the snapshot');
+        run_command($cmd, errmsg => 'An error occurred while making the snapshot');
 
-    return undef;
+        return undef;
+    });
 }
 
 sub volume_snapshot_delete {
@@ -879,13 +960,16 @@ sub volume_snapshot_delete {
         return PVE::Storage::Plugin::volume_snapshot_delete(@_);
     }
 
-    my $mountpoint = $scfg->{path};
+    # Wrap the snapshot deletion with NBD unmapping to prevent daemon crashes
+    return $class->with_nbd_unmapped($scfg, $volname, sub {
+        my $mountpoint = $scfg->{path};
 
-    my $cmd = ['/usr/bin/mfsrmsnapshot', "$mountpoint/images/$vmid/snaps/$snap/$name"];
+        my $cmd = ['/usr/bin/mfsrmsnapshot', "$mountpoint/images/$vmid/snaps/$snap/$name"];
 
-    run_command($cmd, errmsg => 'An error occurred while deleting the snapshot');
+        run_command($cmd, errmsg => 'An error occurred while deleting the snapshot');
 
-    return undef;
+        return undef;
+    });
 }
 
 sub volume_snapshot_rollback {
@@ -897,15 +981,18 @@ sub volume_snapshot_rollback {
         return PVE::Storage::Plugin::volume_snapshot_rollback(@_);
     }
 
-    my $mountpoint = $scfg->{path};
+    # Wrap the snapshot rollback with NBD unmapping to prevent daemon crashes
+    return $class->with_nbd_unmapped($scfg, $volname, sub {
+        my $mountpoint = $scfg->{path};
 
-    my $snapdir = "$mountpoint/images/$vmid/snaps/$snap";
+        my $snapdir = "$mountpoint/images/$vmid/snaps/$snap";
 
-    my $cmd = ['/usr/bin/mfsmakesnapshot', '-o', "$snapdir/$name", "$mountpoint/images/$vmid/$name"];
+        my $cmd = ['/usr/bin/mfsmakesnapshot', '-o', "$snapdir/$name", "$mountpoint/images/$vmid/$name"];
 
-    run_command($cmd, errmsg => 'An error occurred while restoring the snapshot');
+        run_command($cmd, errmsg => 'An error occurred while restoring the snapshot');
 
-    return undef;
+        return undef;
+    });
 }
 
 sub status {
