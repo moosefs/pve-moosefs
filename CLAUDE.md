@@ -45,3 +45,4 @@ This project uses Palace (`pal`) for development:
 - **Taint Mode Compatibility** - All code must work with Perl's taint mode (-T) as used by vzdump and other Proxmox tools
 - **Test with Real Infrastructure** - Use actual MooseFS clusters and Proxmox VE for testing, not mocks
 - **MooseFS Cluster Initialization** - ALWAYS use `mfsmaster -c <config> -a` to initialize a cluster, never operate on metadata.mfs.empty directly
+- **CRITICAL: Never Copy metadata.mfs.empty to Working Directory** - NEVER copy metadata.mfs.empty into the DATA_PATH directory. This will overwrite existing metadata and cause INSTANT DATA LOSS. Always use `mfsmaster -a` for initialization
