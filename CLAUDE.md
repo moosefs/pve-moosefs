@@ -44,3 +44,4 @@ This project uses Palace (`pal`) for development:
 - **NBD Device Lifecycle** - Pay careful attention to mfsbdev NBD device mapping/unmapping in all operations
 - **Taint Mode Compatibility** - All code must work with Perl's taint mode (-T) as used by vzdump and other Proxmox tools
 - **Test with Real Infrastructure** - Use actual MooseFS clusters and Proxmox VE for testing, not mocks
+- **MooseFS Cluster Initialization** - ALWAYS use `mfsmaster -c <config> -a` to initialize a cluster, never operate on metadata.mfs.empty directly
