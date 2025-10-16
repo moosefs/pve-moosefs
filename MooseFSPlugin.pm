@@ -120,6 +120,13 @@ sub moosefs_start_bdev {
     eval { run_command($cmd, errmsg => 'mfsbdev start failed'); };
     if ($@) {
         my $error = $@;
+
+        # If socket already exists, mfsbdev is already running - this is fine
+        if ($error =~ /Address already in use/) {
+            log_debug "[moosefs_start_bdev] mfsbdev already running (socket in use), continuing";
+            return;
+        }
+
         # Provide helpful context if mfsbdev start fails
         if ($error =~ /can't resolve hostname|connection refused|no route to host|network unreachable/i) {
             die "Failed to start mfsbdev: Cannot connect to MooseFS master '$mfsmaster' on port " . ($mfsport // '9421') . ".\n" .
@@ -439,19 +446,26 @@ sub alloc_image {
     $name = $class->find_free_diskname($storeid, $scfg, $vmid, $fmt) if !$name;
 
     my $imagedir = "images/$vmid";
-    File::Path::make_path($scfg->{path}."/$imagedir");
+    my $imagedir_path = "$scfg->{path}/$imagedir";
+    File::Path::make_path($imagedir_path);
 
     my $path = "/$imagedir/$name";
 
-    # Write the size of the block device to a file alongside it
-    my $write_size_file = "$scfg->{path}/$imagedir/$name.size";
-
-    open(my $write_fh, '>', $write_size_file) or die "Failed to open $write_size_file: $!";
-    print $write_fh $size;
-    close $write_fh;
-
     # Size is in kibibytes, but MooseFS expects bytes
     my $size_bytes = $size * 1024;
+
+    # Create the file FIRST with the correct size
+    # mfsbdev map requires the file to exist before mapping
+    my $full_path = "$scfg->{path}$path";
+    log_debug "[alloc_image] Creating image file: $full_path with size $size_bytes bytes";
+    eval {
+        run_command(['truncate', '-s', $size_bytes, $full_path],
+            errmsg => "Failed to create image file");
+    };
+    if ($@) {
+        log_debug "[alloc_image] Failed to create file: $@";
+        die $@;
+    }
 
     # Check if NBD module is loaded before trying to map
     my $nbd_loaded = system("lsmod | grep -q '^nbd '") == 0;
@@ -459,44 +473,24 @@ sub alloc_image {
         # Try to load the nbd module
         eval { run_command(['modprobe', 'nbd', 'max_part=16'], errmsg => 'Failed to load nbd module'); };
         if ($@) {
+            # Clean up the file we just created
+            unlink $full_path;
             die "NBD kernel module not loaded. Please run: modprobe nbd max_part=16\n";
         }
     }
 
+    # Now map the file to an NBD device
     my $cmd = $scfg->{mfsnbdlink}
         ? ['/usr/sbin/mfsbdev', 'map', '-l', $scfg->{mfsnbdlink}, '-f', $path, '-s', $size_bytes]
         : ['/usr/sbin/mfsbdev', 'map', '-f', $path, '-s', $size_bytes];
     eval { run_command($cmd, errmsg => 'mfsbdev map failed'); };
     if ($@) {
+        # Clean up the file on mapping failure
+        unlink $full_path;
         if ($@ =~ /can't find free NBD device/) {
             die "No free NBD devices available. Check if nbd module is loaded (lsmod | grep nbd) and increase max_part if needed\n";
         }
         die $@;
-    }
-
-    # Create the actual image file for LXC compatibility
-    # LXC needs to mkfs the file directly, not through NBD
-    # mfsbdev map creates a 0-byte file, we need to set the correct size
-    my $full_path = "$scfg->{path}$path";
-    my $current_size = -s $full_path || 0;
-
-    if ($current_size != $size_bytes) {
-        log_debug "[alloc_image] Setting file size for LXC compatibility: $full_path ($current_size -> $size_bytes bytes)";
-        eval {
-            run_command(['truncate', '-s', $size_bytes, $full_path],
-                errmsg => "Failed to set image file size");
-        };
-        if ($@) {
-            log_debug "[alloc_image] Failed to set file size: $@";
-            # Try to unmap on failure
-            eval {
-                my $unmap_cmd = $scfg->{mfsnbdlink}
-                    ? ['/usr/sbin/mfsbdev', 'unmap', '-l', $scfg->{mfsnbdlink}, '-f', $path]
-                    : ['/usr/sbin/mfsbdev', 'unmap', '-f', $path];
-                run_command($unmap_cmd);
-            };
-            die $@;
-        }
     }
 
     return "$vmid/$name";
@@ -526,7 +520,6 @@ sub free_image {
     # --- mfsbdev is ON and vtype IS 'images' ---
     my $mfs_internal_path = "/images/$vmid/$parsed_name";
     my $image_file_path   = "$scfg->{path}$mfs_internal_path";
-    my $size_file_path    = "$image_file_path.size"; # Path for .size file, only relevant if it was NBD-managed
 
     # Determine if it's NBD-managed by checking the path type returned by filesystem_path.
     # filesystem_path handles its own logic for when to check mfsbdev list (e.g. for 'raw' images).
@@ -544,17 +537,15 @@ sub free_image {
                 : ['/usr/sbin/mfsbdev', 'unmap', '-f', $mfs_internal_path];
             run_command($cmd_unmap, errmsg => "mfsbdev unmap -f $mfs_internal_path failed");
 
-            log_debug "[free_image] Unmap for $volname ($mfs_internal_path) presumably successful. Unlinking image and .size files.";
+            log_debug "[free_image] Unmap for $volname ($mfs_internal_path) presumably successful. Unlinking image file.";
             unlink $image_file_path or log_debug "[free_image] Failed to unlink $image_file_path post-unmap: $!" if -e $image_file_path;
-            unlink $size_file_path or log_debug "[free_image] Failed to unlink $size_file_path post-unmap: $!" if -e $size_file_path;
         } else {
-            log_debug "[free_image] Vol: $volname resolved to NBD '$resolved_path', but image $image_file_path MISSING. Attempting unmap for $mfs_internal_path and .size cleanup only.";
+            log_debug "[free_image] Vol: $volname resolved to NBD '$resolved_path', but image $image_file_path MISSING. Attempting unmap for $mfs_internal_path.";
             my $cmd_unmap_missing = $scfg->{mfsnbdlink}
                 ? ['/usr/sbin/mfsbdev', 'unmap', '-l', $scfg->{mfsnbdlink}, '-f', $mfs_internal_path]
                 : ['/usr/sbin/mfsbdev', 'unmap', '-f', $mfs_internal_path];
             eval { run_command($cmd_unmap_missing, errmsg => "mfsbdev unmap -f $mfs_internal_path attempted (image file was missing)"); };
             if ($@) { log_debug "[free_image] Unmap attempt for missing image $mfs_internal_path resulted in error (possibly expected): $@"; }
-            unlink $size_file_path or log_debug "[free_image] Failed to unlink $size_file_path (image file was missing): $!" if -e $size_file_path;
         }
     } else {
         # NOT NBD-managed (filesystem_path returned a direct file path, or was undef/empty).
@@ -564,16 +555,8 @@ sub free_image {
         return $class->SUPER::free_image($storeid, $scfg, $volname, $isBase, $format_param);
     }
 
-    # Cleanup orphaned .size files and empty directories (defensive against partial allocations)
-    my $image_dir_path = "$scfg->{path}/images/$vmid";
-
-    # Remove orphaned .size file if disk file doesn't exist
-    if (-e $size_file_path && !-e $image_file_path) {
-        log_debug "[free_image] Found orphaned .size file without disk, removing: $size_file_path";
-        unlink $size_file_path or log_debug "[free_image] Failed to remove orphaned .size file: $!";
-    }
-
     # Remove empty VM image directory to prevent future allocation issues
+    my $image_dir_path = "$scfg->{path}/images/$vmid";
     if (-d $image_dir_path) {
         opendir(my $dh, $image_dir_path) or log_debug "[free_image] Cannot open directory $image_dir_path: $!";
         if ($dh) {
@@ -611,6 +594,12 @@ sub map_volume {
 
     my ($vtype, $name, $vmid, undef, undef, $isBase, $format) = $class->parse_volname($volname);
 
+    # Skip NBD mapping for TPM state volumes - they need direct filesystem paths (directories)
+    if ($name && $name =~ /^vm-\d+-tpmstate/) {
+        log_debug "[map_volume] Skipping NBD mapping for TPM state volume $volname";
+        return $scfg->{path} . "/images/$vmid/$name";
+    }
+
     # Only handle raw format image volumes
     return $class->SUPER::activate_volume($storeid, $scfg, $volname, $snapname) if $vtype ne 'images' || $format ne 'raw';
 
@@ -644,33 +633,23 @@ sub map_volume {
         }
     }
 
-    # Fetch size from the size file alongside the block device
-    my $size_file = "$scfg->{path}/images/$vmid/$name.size";
-    log_debug "Size file $size_file";
-    my $size_kib = 0; # Default to 0 KiB
-    if (-e $size_file) {
-        my $size_content = do { open(my $fh, '<', $size_file) or log_debug "Failed to open $size_file: $!"; local $/; <$fh> };
-        if (defined $size_content && $size_content =~ /^(\d+)$/) {
-            $size_kib = $1;
-        } else {
-            log_debug "Invalid or empty content in size file: $size_file. Content: '" . (defined $size_content ? $size_content : "undef") . "'";
-        }
-    } else {
-        log_debug "Size file $size_file does not exist.";
-    }
-
     my $path = "/images/$vmid/$name";
 
-    # Size is in kibibytes, but MooseFS expects bytes
-    my $size_bytes = $size_kib * 1024;
-
-    # If size is 0 or less, log and return undef, as mapping such a volume is not possible or meaningful.
-    if ($size_bytes <= 0) {
-        log_debug "Calculated size_bytes is $size_bytes for volume $volname (source KiB: $size_kib). Cannot map, returning undef.";
-        return undef; # Indicate failure to map due to invalid size
+    # Get size from the actual file on MooseFS
+    my $full_path = "$scfg->{path}$path";
+    if (!-e $full_path) {
+        log_debug "Volume file $full_path does not exist, cannot map";
+        return undef;
     }
 
-    log_debug "Activating volume $volname with size $size_bytes";
+    my $size_bytes = -s $full_path;
+    if (!defined $size_bytes || $size_bytes <= 0) {
+        log_debug "Cannot determine size for volume $volname from file, size=$size_bytes";
+        return undef;
+    }
+
+    my $size_kib = int($size_bytes / 1024);
+    log_debug "Activating volume $volname with size $size_bytes bytes ($size_kib KiB)";
 
     # Check if NBD module is loaded before trying to map
     my $nbd_loaded = system("lsmod | grep -q '^nbd '") == 0;
@@ -746,21 +725,45 @@ sub deactivate_volume {
         return 1;
     }
 
-    # Check if volume is actually NBD-mapped by checking for .size file
-    # Only NBD-mapped volumes have .size files
-    my $size_file = "$scfg->{path}/images/$vmid/$name.size";
-    if (!-e $size_file) {
-        log_debug "Skipping deactivation for non-NBD volume $volname (no .size file)";
+    my $path = "/images/$vmid/$name";
+
+    # Check if the device is actually mapped before trying to unmap
+    if (moosefs_bdev_is_active($scfg)) {
+        my $list_cmd = ['/usr/sbin/mfsbdev', 'list'];
+        my $list_output = '';
+        eval {
+            run_command($list_cmd, outfunc => sub { $list_output .= shift; }, errmsg => 'mfsbdev list failed');
+        };
+
+        # Check if this specific volume is mapped
+        my $is_mapped = 0;
+        for my $line (split /\r?\n/, $list_output) {
+            if ($line =~ /\bfile:\s*\Q$path\E\b/) {
+                $is_mapped = 1;
+                last;
+            }
+        }
+
+        if (!$is_mapped) {
+            log_debug "Volume $volname is not currently mapped, skipping deactivation";
+            return 1;
+        }
+    } else {
+        log_debug "mfsbdev daemon is not active, skipping deactivation for $volname";
         return 1;
     }
-
-    my $path = "/images/$vmid/$name";
 
     log_debug "Deactivating volume $volname";
 
     my $cmd = ['/usr/sbin/mfsbdev', 'unmap', '-f', $path];
 
-    run_command($cmd, errmsg => "can't unmap MooseFS device '$path'");
+    eval { run_command($cmd, errmsg => "can't unmap MooseFS device '$path'"); };
+    if ($@) {
+        log_debug "Unmap failed for $volname: $@";
+        # Don't die on unmap failure during deactivation - device might already be unmapped
+        # This prevents cascade failures during cleanup
+        return 1;
+    }
 
     return 1;
 }
@@ -864,6 +867,12 @@ sub filesystem_path {
 
     my ($vtype, $name, $vmid, undef, undef, $isBase, $format) = $class->parse_volname($volname);
 
+    # Skip NBD mapping for TPM state volumes - they need direct filesystem paths (directories)
+    if ($name && $name =~ /^vm-\d+-tpmstate/) {
+        log_debug "[filesystem_path] Returning direct path for TPM state volume $volname";
+        return "$scfg->{path}/images/$vmid/$name";
+    }
+
     # Handle snapshots for raw format in MooseFS
     if (defined($snapname) && $vtype eq 'images' && $format eq 'raw') {
         # MooseFS supports snapshots for raw files through mfsmakesnapshot
@@ -872,9 +881,8 @@ sub filesystem_path {
         return "$mountpoint/images/$vmid/snaps/$snapname/$name";
     }
 
-    # Only do NBD logic for raw images without snapshots AND when a sidecar size file exists
-    my $size_sidecar = defined($vmid) ? "$scfg->{path}/images/$vmid/$name.size" : undef;
-    unless ($scfg->{mfsbdev} && $vtype eq 'images' && $format eq 'raw' && !defined($snapname) && -e $size_sidecar) {
+    # Only do NBD logic for raw images without snapshots
+    unless ($scfg->{mfsbdev} && $vtype eq 'images' && $format eq 'raw' && !defined($snapname)) {
         return $class->SUPER::filesystem_path($scfg, $volname, $snapname);
     }
 
@@ -957,7 +965,6 @@ sub volume_resize {
 
     my $mfs_path = "/images/$vmid/$name";
     my $full_path = "$scfg->{path}$mfs_path";
-    my $size_file = "$full_path.size";
 
     # Check if image exists
     if (!-e $full_path) {
@@ -966,21 +973,63 @@ sub volume_resize {
 
     log_debug "[volume_resize] Resizing mfsbdev volume: $mfs_path";
 
-    # Resize using mfsbdev
     my $size_bytes = $size * 1024;  # Convert KiB to bytes
-    my $cmd = $scfg->{mfsnbdlink}
-        ? ['/usr/sbin/mfsbdev', 'resize', '-l', $scfg->{mfsnbdlink}, '-f', $mfs_path, '-s', $size_bytes]
-        : ['/usr/sbin/mfsbdev', 'resize', '-f', $mfs_path, '-s', $size_bytes];
 
-    run_command($cmd, errmsg => 'mfsbdev resize failed');
+    # Step 1: Check if volume is currently mapped and unmap it
+    my $was_mapped = 0;
+    if (moosefs_bdev_is_active($scfg)) {
+        my $list_cmd = ['/usr/sbin/mfsbdev', 'list'];
+        my $list_output = '';
+        eval {
+            run_command($list_cmd, outfunc => sub { $list_output .= shift; }, errmsg => 'mfsbdev list failed');
+        };
 
-    # Update .size file
-    log_debug "[volume_resize] Updating .size file to $size KiB";
-    open(my $fh, '>', $size_file) or die "Failed to write $size_file: $!";
-    print $fh $size;
-    close $fh;
+        # Check if this specific volume is mapped
+        for my $line (split /\r?\n/, $list_output) {
+            if ($line =~ /\bfile:\s*\Q$mfs_path\E\b/) {
+                $was_mapped = 1;
+                log_debug "[volume_resize] Volume is currently mapped, unmapping for resize";
 
-    log_debug "[volume_resize] Successfully resized $volname to $size KiB";
+                # Unmap before resize
+                my $unmap_cmd = $scfg->{mfsnbdlink}
+                    ? ['/usr/sbin/mfsbdev', 'unmap', '-l', $scfg->{mfsnbdlink}, '-f', $mfs_path]
+                    : ['/usr/sbin/mfsbdev', 'unmap', '-f', $mfs_path];
+                run_command($unmap_cmd, errmsg => "Failed to unmap volume before resize");
+                last;
+            }
+        }
+    }
+
+    # Step 2: Resize the actual file
+    log_debug "[volume_resize] Resizing file $full_path to $size_bytes bytes";
+    eval {
+        run_command(['truncate', '-s', $size_bytes, $full_path],
+            errmsg => "Failed to resize image file");
+    };
+    if ($@) {
+        # If resize failed and volume was mapped, try to remap it
+        if ($was_mapped) {
+            log_debug "[volume_resize] Resize failed, attempting to remap volume";
+            eval {
+                my $remap_cmd = $scfg->{mfsnbdlink}
+                    ? ['/usr/sbin/mfsbdev', 'map', '-l', $scfg->{mfsnbdlink}, '-f', $mfs_path, '-s', (-s $full_path)]
+                    : ['/usr/sbin/mfsbdev', 'map', '-f', $mfs_path, '-s', (-s $full_path)];
+                run_command($remap_cmd);
+            };
+        }
+        die "Failed to resize file: $@";
+    }
+
+    # Step 3: Remap with new size if it was mapped before
+    if ($was_mapped) {
+        log_debug "[volume_resize] Remapping volume with new size";
+        my $map_cmd = $scfg->{mfsnbdlink}
+            ? ['/usr/sbin/mfsbdev', 'map', '-l', $scfg->{mfsnbdlink}, '-f', $mfs_path, '-s', $size_bytes]
+            : ['/usr/sbin/mfsbdev', 'map', '-f', $mfs_path, '-s', $size_bytes];
+        run_command($map_cmd, errmsg => 'mfsbdev map failed after resize');
+    }
+
+    log_debug "[volume_resize] Successfully resized $volname to $size KiB ($size_bytes bytes)";
 
     return undef;
 }
@@ -1048,25 +1097,18 @@ sub with_nbd_unmapped {
         die "Invalid storage path" unless $storage_path =~ /^(\/[-\w\/]+)$/;
         $storage_path = $1;
 
-        # Get size from .size file
-        my $size_file = "$storage_path$mfs_path.size";
-        if (!-e $size_file) {
-            log_debug "[with_nbd_unmapped] ERROR: Size file $size_file missing, cannot remap";
-            die "Cannot remap volume after snapshot: size file missing at $size_file";
+        # Get size from the actual file on MooseFS
+        my $image_file = "$storage_path$mfs_path";
+        if (!-e $image_file) {
+            log_debug "[with_nbd_unmapped] ERROR: Image file $image_file missing, cannot remap";
+            die "Cannot remap volume after snapshot: image file missing at $image_file";
         }
 
-        my $size_kib = do {
-            open(my $fh, '<', $size_file) or die "Failed to read size file $size_file: $!";
-            local $/;
-            my $content = <$fh>;
-            close $fh;
-            $content;
-        };
-        chomp $size_kib;
-        # Untaint size value (must be numeric)
-        die "Invalid size in .size file" unless $size_kib =~ /^(\d+)$/;
-        $size_kib = $1;
-        my $size_bytes = $size_kib * 1024;
+        my $size_bytes = -s $image_file;
+        if (!defined $size_bytes || $size_bytes <= 0) {
+            log_debug "[with_nbd_unmapped] ERROR: Invalid size for image file: $size_bytes";
+            die "Cannot remap volume after snapshot: invalid file size";
+        }
 
         my $map_cmd = $scfg->{mfsnbdlink}
             ? ['/usr/sbin/mfsbdev', 'map', '-l', $scfg->{mfsnbdlink}, '-f', $mfs_path, '-s', $size_bytes]
@@ -1157,6 +1199,65 @@ sub volume_snapshot_rollback {
     });
 }
 
+sub volume_export {
+    my ($class, $scfg, $storeid, $fh, $volname, $format, $snapshot, $base_snapshot, $with_snapshots) = @_;
+
+    log_debug "[volume_export] Starting export: volname=$volname, format=$format, storeid=$storeid";
+
+    # For mfsbdev-enabled raw volumes, unmap NBD device before export to ensure
+    # clean migration. The volume will be remapped on the destination node via volume_import.
+    if ($scfg->{mfsbdev}) {
+        my ($vtype, $name, $vmid, undef, undef, undef, $file_format) = eval { $class->parse_volname($volname) };
+
+        if ($vtype eq 'images' && $file_format eq 'raw') {
+            my $mfs_path = "/images/$vmid/$name";
+
+            # Check if volume is currently mapped to NBD
+            if (moosefs_bdev_is_active($scfg)) {
+                my $list_cmd = ['/usr/sbin/mfsbdev', 'list'];
+                my $list_output = '';
+                eval {
+                    run_command($list_cmd, outfunc => sub { $list_output .= shift; }, errmsg => 'mfsbdev list failed');
+                };
+
+                # Check if this specific volume is mapped
+                my $is_mapped = 0;
+                for my $line (split /\r?\n/, $list_output) {
+                    if ($line =~ /\bfile:\s*\Q$mfs_path\E\b/) {
+                        $is_mapped = 1;
+                        last;
+                    }
+                }
+
+                if ($is_mapped) {
+                    log_debug "[volume_export] Unmapping NBD device for $volname before migration export";
+                    my $unmap_cmd = $scfg->{mfsnbdlink}
+                        ? ['/usr/sbin/mfsbdev', 'unmap', '-l', $scfg->{mfsnbdlink}, '-f', $mfs_path]
+                        : ['/usr/sbin/mfsbdev', 'unmap', '-f', $mfs_path];
+                    eval { run_command($unmap_cmd, errmsg => "Failed to unmap $mfs_path before export"); };
+                    if ($@) {
+                        log_debug "[volume_export] WARNING: Failed to unmap volume before export: $@";
+                        # Don't fail the export if unmap fails - volume might not be in use
+                    }
+                }
+            }
+        }
+    }
+
+    # Call parent implementation to perform the actual export
+    my $result = eval {
+        $class->SUPER::volume_export($scfg, $storeid, $fh, $volname, $format, $snapshot, $base_snapshot, $with_snapshots);
+    };
+
+    if (my $export_err = $@) {
+        log_debug "[volume_export] Parent export failed: $export_err";
+        die $export_err;
+    }
+
+    log_debug "[volume_export] Export completed successfully for $volname";
+    return $result;
+}
+
 sub volume_import {
     my ($class, $scfg, $storeid, $fh, $volname, $format, $snapshot, $base_snapshot, $with_snapshots, $allow_rename) = @_;
 
@@ -1178,41 +1279,17 @@ sub volume_import {
     my $imported_volname = $result;
     $imported_volname =~ s/^[^:]+://;  # Strip "storeid:" prefix
 
-    # Verify the imported volume for mfsbdev volumes
+    # Verify and remap the imported volume for mfsbdev volumes
     if ($scfg->{mfsbdev}) {
         my ($vtype, $name, $vmid, undef, undef, undef, $file_format) = eval { $class->parse_volname($imported_volname) };
 
         if ($vtype eq 'images' && $file_format eq 'raw') {
-            log_debug "[volume_import] Verifying mfsbdev volume: $imported_volname";
+            log_debug "[volume_import] Verifying and remapping mfsbdev volume: $imported_volname";
 
             my $image_path = "$scfg->{path}/images/$vmid/$name";
-            my $size_file = "$image_path.size";
+            my $mfs_path = "/images/$vmid/$name";
 
-            # Verification 1: Check .size file exists and has valid content
-            if (!-e $size_file) {
-                log_debug "[volume_import] ERROR: Size file missing: $size_file";
-                eval { $class->free_image($storeid, $scfg, $imported_volname, 0, $file_format) };
-                warn "Cleanup after verification failure: $@" if $@;
-                die "Volume import verification failed: .size file missing (possible incomplete transfer)\n";
-            }
-
-            my $expected_size = do {
-                open(my $sfh, '<', $size_file) or die "Cannot read $size_file: $!";
-                local $/;
-                my $content = <$sfh>;
-                close $sfh;
-                $content;
-            };
-            chomp $expected_size;
-
-            if ($expected_size !~ /^\d+$/ || $expected_size == 0) {
-                log_debug "[volume_import] ERROR: Invalid size in .size file: '$expected_size'";
-                eval { $class->free_image($storeid, $scfg, $imported_volname, 0, $file_format) };
-                warn "Cleanup after verification failure: $@" if $@;
-                die "Volume import verification failed: invalid size value (possible corruption)\n";
-            }
-
-            # Verification 2: Check image file exists
+            # Verification: Check image file exists and has valid size
             if (!-e $image_path) {
                 log_debug "[volume_import] ERROR: Image file missing: $image_path";
                 eval { $class->free_image($storeid, $scfg, $imported_volname, 0, $file_format) };
@@ -1220,18 +1297,38 @@ sub volume_import {
                 die "Volume import verification failed: image file missing (incomplete transfer)\n";
             }
 
-            # Verification 3: Check image file size matches expected
             my $actual_size_bytes = -s $image_path;
-            my $expected_size_bytes = $expected_size * 1024;
-
-            if ($actual_size_bytes != $expected_size_bytes) {
-                log_debug "[volume_import] ERROR: Size mismatch - expected $expected_size_bytes bytes, got $actual_size_bytes bytes";
+            if (!defined $actual_size_bytes || $actual_size_bytes <= 0) {
+                log_debug "[volume_import] ERROR: Invalid size for imported image: $actual_size_bytes";
                 eval { $class->free_image($storeid, $scfg, $imported_volname, 0, $file_format) };
                 warn "Cleanup after verification failure: $@" if $@;
-                die "Volume import verification failed: size mismatch (expected $expected_size_bytes bytes, got $actual_size_bytes) - incomplete transfer detected\n";
+                die "Volume import verification failed: invalid file size (incomplete transfer)\n";
             }
 
             log_debug "[volume_import] Verification passed: $imported_volname ($actual_size_bytes bytes)";
+
+            # Remap the volume to NBD on the destination node
+            # This ensures the volume is properly mapped after migration
+            log_debug "[volume_import] Remapping volume to NBD device after import";
+
+            # Start mfsbdev if not already running
+            if (!moosefs_bdev_is_active($scfg)) {
+                log_debug "[volume_import] Starting mfsbdev daemon";
+                moosefs_start_bdev($scfg);
+            }
+
+            # Map the volume to an NBD device
+            my $map_cmd = $scfg->{mfsnbdlink}
+                ? ['/usr/sbin/mfsbdev', 'map', '-l', $scfg->{mfsnbdlink}, '-f', $mfs_path, '-s', $actual_size_bytes]
+                : ['/usr/sbin/mfsbdev', 'map', '-f', $mfs_path, '-s', $actual_size_bytes];
+
+            eval { run_command($map_cmd, errmsg => "Failed to remap $mfs_path after import"); };
+            if ($@) {
+                log_debug "[volume_import] WARNING: Failed to remap volume after import: $@";
+                # Don't fail the import if remapping fails - the volume can be mapped later when activated
+            } else {
+                log_debug "[volume_import] Successfully remapped $imported_volname to NBD device";
+            }
         }
     }
 
