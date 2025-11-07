@@ -96,7 +96,7 @@ We believe in transparency about limitations and ongoing work:
 ## Compatibility & Requirements
 
 - **Proxmox VE:** 9.0 or newer (unchanged)
-- **MooseFS:** Community Edition 3.0+ or MooseFS Pro 4.0+
+- **MooseFS:** Community Edition 4.0+ or MooseFS Pro 4.0+
 - **Kernel Modules:** NBD module with `max_part=16` or higher
 
 ## Installation
@@ -159,7 +159,6 @@ Based on community feedback and ongoing work:
 ## Support & Contribution
 
 - **Report Issues:** [GitHub Issues](https://github.com/moosefs/pve-moosefs/issues)
-- **Community Discussion:** [MooseFS Community Forums](https://moosefs.com/community)
 - **Professional Support:** For enterprise deployments, consider [MooseFS Pro](https://moosefs.com/products) which includes production-grade HA and dedicated support
 
 ## Acknowledgments
