@@ -98,6 +98,31 @@ This command creates a custom storage named `moosefs-vm-storage` using the Moose
 
 ## Changelog
 
+### v0.1.11 - Reliability Improvements (2025-11-07)
+
+**Migration & Multi-Disk Fixes:**
+* **Fixed:** Multi-disk VMs can now hot-migrate successfully ([#54](https://github.com/moosefs/pve-moosefs/issues/54))
+  - Added intelligent retry logic with exponential backoff for NBD mapping
+  - Resolves "link exists" errors when migrating VMs with multiple disks
+  - Improved race condition handling during concurrent disk operations
+
+**Windows TPM Support:**
+* **Fixed:** Windows VMs with TPM 2.0 now start correctly ([#51](https://github.com/moosefs/pve-moosefs/issues/51))
+  - Enhanced TPM state directory path resolution
+  - Automatic creation of TPM directories with proper permissions
+  - Ensures compatibility with Windows 11 TPM requirements
+
+**Reliability Enhancements:**
+* Improved NBD device collision detection during hot migration
+* Better error handling for concurrent storage operations
+* Enhanced logging for troubleshooting migration issues
+
+**Known Issues:**
+* [#50](https://github.com/moosefs/pve-moosefs/issues/50): LXC storage migration safety improvements in progress
+* [#47](https://github.com/moosefs/pve-moosefs/issues/47): Post-migration mfsbdev state preservation under investigation
+
+**Note:** This release focuses on improving reliability for common migration scenarios. As always, maintain backups and test migrations in non-production environments first. We continue working toward production-grade robustness.
+
 ### v0.1.10 - Critical bug fixes
 
   * Improve mount detection, fix subfolder bug in bdev adapter

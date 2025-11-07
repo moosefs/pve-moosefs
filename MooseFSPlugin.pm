@@ -7,6 +7,7 @@ use Data::Dumper qw(Dumper);
 use IO::File;
 use IO::Socket::UNIX;
 use File::Path;
+use File::Basename;
 use POSIX qw(strftime);
 
 use PVE::Storage::Plugin;
@@ -612,24 +613,35 @@ sub map_volume {
         moosefs_start_bdev($scfg);
     }
 
-    # Check if the volume is already mapped
-    my $list_cmd = ['/usr/sbin/mfsbdev', 'list'];
-    my $list_output = '';
-    eval {
-        run_command($list_cmd, outfunc => sub { $list_output .= shift; }, errmsg => 'mfsbdev list failed');
-    };
-    if ($@) {
-        log_debug "Failed to list MooseFS block devices: $@";
-        return $class->SUPER::filesystem_path($scfg, $volname, $snapname);
-    }
+    # FIX #54: Check if the volume is already mapped (with retry to handle race conditions)
+    my $max_retries = 3;
+    my $retry_delay = 0.5; # seconds
 
-    # improved parsing: scan each line, allow any spacing/order
-    for my $line (split /\r?\n/, $list_output) {
-        # match "file: <path>" then later "device: /dev/nbdX" on the same line
-        if ($line =~ /\bfile:\s*\Q$mfs_path\E\b.*?\bdevice:\s*(\/dev\/nbd\d+)/) {
-            my $nbd_path = $1;
-            log_debug "Found existing NBD device $nbd_path for volume $volname via improved parsing";
-            return $nbd_path;
+    for (my $attempt = 0; $attempt < $max_retries; $attempt++) {
+        my $list_cmd = ['/usr/sbin/mfsbdev', 'list'];
+        my $list_output = '';
+        eval {
+            run_command($list_cmd, outfunc => sub { $list_output .= shift; }, errmsg => 'mfsbdev list failed');
+        };
+        if ($@) {
+            log_debug "Failed to list MooseFS block devices: $@";
+            last; # Break out of retry loop on list failure
+        }
+
+        # improved parsing: scan each line, allow any spacing/order
+        for my $line (split /\r?\n/, $list_output) {
+            # match "file: <path>" then later "device: /dev/nbdX" on the same line
+            if ($line =~ /\bfile:\s*\Q$mfs_path\E\b.*?\bdevice:\s*(\/dev\/nbd\d+)/) {
+                my $nbd_path = $1;
+                log_debug "Found existing NBD device $nbd_path for volume $volname via improved parsing (attempt $attempt)";
+                return $nbd_path;
+            }
+        }
+
+        # If not found and we have retries left, wait before checking again
+        if ($attempt < $max_retries - 1) {
+            log_debug "Volume $volname not yet mapped, retrying in ${retry_delay}s (attempt $attempt)";
+            select(undef, undef, undef, $retry_delay);
         }
     }
 
@@ -663,22 +675,51 @@ sub map_volume {
         }
     }
 
-    my $map_cmd = $scfg->{mfsnbdlink}
-        ? ['/usr/sbin/mfsbdev', 'map', '-l', $scfg->{mfsnbdlink}, '-f', $path, '-s', $size_bytes]
-        : ['/usr/sbin/mfsbdev', 'map', '-f', $path, '-s', $size_bytes];
+    # FIX #54: Retry mapping with exponential backoff for "link exists" errors
+    my $map_retries = 5;
+    my $map_backoff = 0.1; # Start with 100ms
     my $map_output = '';
-    eval {
-        run_command($map_cmd,
-            outfunc => sub { $map_output .= shift; },
-            errmsg => 'mfsbdev map failed');
-    };
-    if ($@) {
-        log_debug "Failed to map MooseFS block device: $@";
-        if ($@ =~ /can't find free NBD device/) {
-            log_debug "No free NBD devices available. Consider increasing max_part parameter for nbd module";
+    my $map_success = 0;
+
+    for (my $attempt = 0; $attempt < $map_retries; $attempt++) {
+        my $map_cmd = $scfg->{mfsnbdlink}
+            ? ['/usr/sbin/mfsbdev', 'map', '-l', $scfg->{mfsnbdlink}, '-f', $path, '-s', $size_bytes]
+            : ['/usr/sbin/mfsbdev', 'map', '-f', $path, '-s', $size_bytes];
+
+        $map_output = '';
+        eval {
+            run_command($map_cmd,
+                outfunc => sub { $map_output .= shift; },
+                errmsg => 'mfsbdev map failed');
+            $map_success = 1;
+        };
+
+        if ($map_success) {
+            last; # Mapping succeeded, exit retry loop
         }
-        # Fall back to regular path if we can't get mappings
-        return $class->SUPER::filesystem_path($scfg, $volname, $snapname);
+
+        if ($@) {
+            my $error = $@;
+            log_debug "Map attempt $attempt failed: $error";
+
+            # FIX #54: Handle "link exists" error - another disk might be mapping simultaneously
+            if ($error =~ /link exists/i && $attempt < $map_retries - 1) {
+                log_debug "Link exists error detected, waiting ${map_backoff}s before retry $attempt";
+                select(undef, undef, undef, $map_backoff);
+                $map_backoff *= 1.5; # Exponential backoff
+                next; # Try again
+            }
+
+            if ($error =~ /can't find free NBD device/) {
+                log_debug "No free NBD devices available. Consider increasing max_part parameter for nbd module";
+            }
+
+            # If we've exhausted retries or hit a different error, fall back
+            if ($attempt == $map_retries - 1) {
+                log_debug "Failed to map after $map_retries attempts, falling back to filesystem path";
+                return $class->SUPER::filesystem_path($scfg, $volname, $snapname);
+            }
+        }
     }
 
     if ($map_output =~ m|->(/dev/nbd\d+)|) {
@@ -782,6 +823,33 @@ sub path {
     unless (defined $volname) {
         log_debug "[path] volname is undefined, returning filesystem_path";
         return $class->filesystem_path($scfg, $volname, $snapname);
+    }
+
+    # FIX #51: TPM state files require special handling - they must be directory paths
+    # Windows TPM expects specific file:// protocol paths that must be absolute
+    if (defined $volname && $volname =~ /tpm/i) {
+        my $tpm_path = $class->filesystem_path($scfg, $volname, $snapname);
+
+        # For TPM state files, ensure the directory exists with proper permissions
+        if ($tpm_path && $tpm_path =~ /tpmstate/) {
+            # Ensure parent directory exists
+            use File::Basename;
+            my $tpm_dir = dirname($tpm_path);
+
+            if (!-d $tpm_dir) {
+                log_debug "[path] Creating TPM state directory: $tpm_dir";
+                eval {
+                    File::Path::make_path($tpm_dir, { mode => 0700 });
+                };
+                if ($@) {
+                    log_debug "[path] Failed to create TPM directory $tpm_dir: $@";
+                }
+            }
+
+            log_debug "[path] TPM state path resolved to: $tpm_path";
+        }
+
+        return $tpm_path;
     }
 
     # fallback to default if bdev not enabled
