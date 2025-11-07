@@ -98,30 +98,56 @@ This command creates a custom storage named `moosefs-vm-storage` using the Moose
 
 ## Changelog
 
-### v0.1.11 - Reliability Improvements (2025-11-07)
+### v0.1.11 - Major Reliability and Safety Release (2025-11-07)
 
-**Migration & Multi-Disk Fixes:**
+**Critical Fixes:**
 * **Fixed:** Multi-disk VMs can now hot-migrate successfully ([#54](https://github.com/moosefs/pve-moosefs/issues/54))
   - Added intelligent retry logic with exponential backoff for NBD mapping
   - Resolves "link exists" errors when migrating VMs with multiple disks
   - Improved race condition handling during concurrent disk operations
 
-**Windows TPM Support:**
 * **Fixed:** Windows VMs with TPM 2.0 now start correctly ([#51](https://github.com/moosefs/pve-moosefs/issues/51))
   - Enhanced TPM state directory path resolution
   - Automatic creation of TPM directories with proper permissions
   - Ensures compatibility with Windows 11 TPM requirements
 
+* **Fixed:** LXC storage migration safety and data corruption ([#50](https://github.com/moosefs/pve-moosefs/issues/50))
+  - Graceful cleanup on allocation failures prevents orphaned resources
+  - Improved error handling prevents cascade failures during cleanup
+  - Snapshot operations now safely unmap NBD before execution
+
+* **Fixed:** LXC resize and creation with mfsbdev ([#52](https://github.com/moosefs/pve-moosefs/issues/52))
+  - Create image files before NBD mapping (mfsbdev requirement)
+  - Better error messages for NBD module and device availability
+  - Improved NBD device handling and LXC compatibility
+
+* **Fixed:** LXC snapshot backups with taint mode ([#48](https://github.com/moosefs/pve-moosefs/issues/48))
+  - Proper path untainting for vzdump compatibility
+  - Enhanced snapshot operation safety
+
+* **Fixed:** NBD daemon crashes during snapshot operations ([#53](https://github.com/moosefs/pve-moosefs/issues/53))
+  - Added `with_nbd_unmapped` wrapper for safe snapshot operations
+  - Prevents daemon crashes by unmapping before snapshots
+
+* **Fixed:** Helpful error messages when MooseFS master unreachable ([#38](https://github.com/moosefs/pve-moosefs/issues/38))
+  - Clearer diagnostics for connection issues
+
+**New Features:**
+* Multiple MooseFS cluster support via `mfsnbdlink` property
+* Rust-based patch generator tool for easier development
+* UI support for mfsnbdlink configuration
+
 **Reliability Enhancements:**
-* Improved NBD device collision detection during hot migration
+* Graceful cleanup on allocation failures
+* Snapshot safety wrapper prevents daemon crashes
+* Improved NBD device collision detection
 * Better error handling for concurrent storage operations
-* Enhanced logging for troubleshooting migration issues
+* Enhanced logging for troubleshooting
 
 **Known Issues:**
-* [#50](https://github.com/moosefs/pve-moosefs/issues/50): LXC storage migration safety improvements in progress
 * [#47](https://github.com/moosefs/pve-moosefs/issues/47): Post-migration mfsbdev state preservation under investigation
 
-**Note:** This release focuses on improving reliability for common migration scenarios. As always, maintain backups and test migrations in non-production environments first. We continue working toward production-grade robustness.
+**Note:** This release represents a major step toward production-grade reliability. As always, maintain backups and test in non-production environments first.
 
 ### v0.1.10 - Critical bug fixes
 

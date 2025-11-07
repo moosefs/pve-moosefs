@@ -1,3 +1,20 @@
+libpve-storage-custom-moosefs-perl (0.1.11-1) unstable; urgency=medium
+
+  * Fix multi-disk VM hot migration with retry logic (#54)
+  * Fix Windows 11 VMs with TPM 2.0 support (#51)
+  * Fix LXC storage migration safety and data corruption (#50)
+  * Fix LXC resize and creation with mfsbdev (#52)
+  * Fix LXC snapshot backups with taint mode (#48)
+  * Fix NBD daemon crashes during snapshot operations (#53)
+  * Add helpful error messages when MooseFS master unreachable (#38)
+  * Add multiple MooseFS cluster support via mfsnbdlink property
+  * Add Rust-based patch generator tool
+  * Improve NBD device handling and LXC compatibility
+  * Add graceful cleanup on allocation failures
+  * Add snapshot safety wrapper to prevent daemon crashes
+
+ -- Benjamin Arntzen <zorlin@gmail.com>  Fri, 07 Nov 2025 19:30:00 +0000
+
 libpve-storage-custom-moosefs-perl (0.1.10-1) unstable; urgency=medium
 
   * Improve mount detection, fix subfolder bug in bdev adapter
