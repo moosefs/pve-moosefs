@@ -87,6 +87,7 @@ This command creates a custom storage named `moosefs-vm-storage` using the Moose
 
 **Contributors:**
 
+* [@Zorlin](https://github.com/Zorlin) — Principal author, testing, automation and quality control
 * [@anwright](https://github.com/anwright) — major fixes, snapshots, and cleanup
 * [@pkonopelko](https://github.com/pkonopelko) — general advice and support
 
